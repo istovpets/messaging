@@ -1,6 +1,9 @@
 package messaging
 
-import "sync"
+import (
+	"fmt"
+	"sync"
+)
 
 type Notifier struct {
 	mu     sync.RWMutex
@@ -14,12 +17,12 @@ func NewNotifier() *Notifier {
 	}
 }
 
-func (n *Notifier) subscribeChan(topic string) chan any {
+func (n *Notifier) subscribeChan(topic string) (chan any, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
 	if n.closed {
-		panic("notifier is closed")
+		return nil, fmt.Errorf("notifier is closed")
 	}
 
 	ch := make(chan any, 1)
@@ -32,11 +35,14 @@ func (n *Notifier) subscribeChan(topic string) chan any {
 
 	n.topics[topic] = newChnls
 
-	return ch
+	return ch, nil
 }
 
-func (n *Notifier) Subscribe(topic string, handler func(any)) func() {
-	ch := n.subscribeChan(topic)
+func (n *Notifier) Subscribe(topic string, handler func(any)) (func(), error) {
+	ch, err := n.subscribeChan(topic)
+	if err != nil {
+		return nil, err
+	}
 
 	go func() {
 		for msg := range ch {
@@ -46,13 +52,14 @@ func (n *Notifier) Subscribe(topic string, handler func(any)) func() {
 
 	return func() {
 		n.unsubscribe(topic, ch)
-	}
+	}, nil
 }
 
-func (n *Notifier) Publish(topic string, message any) {
+func (n *Notifier) Publish(topic string, message any) error {
 	n.mu.RLock()
 	if n.closed {
-		panic("notifier is closed")
+		n.mu.RUnlock()
+		return fmt.Errorf("notifier is closed")
 	}
 
 	chnls := n.topics[topic]
@@ -72,6 +79,8 @@ func (n *Notifier) Publish(topic string, message any) {
 			}
 		}(ch)
 	}
+
+	return nil
 }
 
 func (n *Notifier) unsubscribe(topic string, ch chan any) {
@@ -119,5 +128,6 @@ func (n *Notifier) Close() {
 		}
 	}
 
+	n.topics = nil
 	n.closed = true
 }

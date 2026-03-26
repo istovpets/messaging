@@ -11,15 +11,27 @@ func main() {
 	notifier := messaging.NewNotifier()
 	defer notifier.Close()
 
-	notifier.Subscribe("topic1", func(msg any) {
+	if _, err := notifier.Subscribe("topic1", func(msg any) {
 		fmt.Printf("topic1 %v", msg)
-	})
+	}); err != nil {
+		fmt.Printf("subscribe error: %v\n", err)
+		return
+	}
 
-	notifier.Subscribe("topic2", func(msg any) {
+	if _, err := notifier.Subscribe("topic2", func(msg any) {
 		println("topic2:", msg)
-	})
+	}); err != nil {
+		fmt.Printf("subscribe error: %v\n", err)
+		return
+	}
 
-	notifier.Publish("topic1", "Hello, world!")
-	notifier.Publish("topic3", "Hello, world!")
+	if err := notifier.Publish("topic1", "Hello, world!"); err != nil {
+		fmt.Printf("publish error: %v\n", err)
+	}
+
+	if err := notifier.Publish("topic3", "Hello, world!"); err != nil {
+		fmt.Printf("publish error: %v\n", err)
+	}
+
 	time.Sleep(time.Second)
 }
