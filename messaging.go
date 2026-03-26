@@ -3,18 +3,81 @@ package messaging
 import (
 	"fmt"
 	"sync"
+	"time"
 )
 
-type Notifier struct {
-	mu     sync.RWMutex
-	topics map[string][]chan any
-	closed bool
+type DeliveryMode int
+
+const (
+	DeliveryHard    DeliveryMode = iota // blocking delivery (guaranteed, but risk of freezing)
+	DeliverySoft                        // non-blocking with retry (best-effort)
+	DeliveryBounded                     // blocking with timeout
+)
+
+type Logger interface {
+	Error(msg string, args ...any)
 }
 
-func NewNotifier() *Notifier {
-	return &Notifier{
-		topics: make(map[string][]chan any),
+type Notifier struct {
+	mu         sync.RWMutex
+	topics     map[string][]chan any
+	closed     bool
+	mode       DeliveryMode
+	bufferSize int
+	retryCount int
+	retryDelay time.Duration
+	timeout    time.Duration
+	logger     Logger
+}
+
+type Option func(*Notifier)
+
+func WithDeliveryMode(mode DeliveryMode) Option {
+	return func(n *Notifier) {
+		n.mode = mode
 	}
+}
+
+func WithBuffer(size int) Option {
+	return func(n *Notifier) {
+		n.bufferSize = size
+	}
+}
+
+func WithRetry(count int, delay time.Duration) Option {
+	return func(n *Notifier) {
+		n.retryCount = count
+		n.retryDelay = delay
+	}
+}
+
+func WithTimeout(timeout time.Duration) Option {
+	return func(n *Notifier) {
+		n.timeout = timeout
+	}
+}
+
+func WithLogger(l Logger) Option {
+	return func(n *Notifier) {
+		n.logger = l
+	}
+}
+
+func NewNotifier(opts ...Option) *Notifier {
+	n := &Notifier{
+		topics:     make(map[string][]chan any),
+		bufferSize: 1,
+		mode:       DeliverySoft,
+		retryCount: 0,
+		retryDelay: 0,
+		timeout:    0,
+	}
+
+	for _, opt := range opts {
+		opt(n)
+	}
+
+	return n
 }
 
 func (n *Notifier) subscribeChan(topic string) (chan any, error) {
@@ -25,7 +88,7 @@ func (n *Notifier) subscribeChan(topic string) (chan any, error) {
 		return nil, fmt.Errorf("notifier is closed")
 	}
 
-	ch := make(chan any, 1)
+	ch := make(chan any, n.bufferSize)
 
 	oldChnls := n.topics[topic]
 
@@ -66,21 +129,65 @@ func (n *Notifier) Publish(topic string, message any) error {
 	n.mu.RUnlock()
 
 	for _, ch := range chnls {
-		func(c chan any) {
-			defer func() {
-				if r := recover(); r != nil {
-					// ignore send to closed channel
-				}
-			}()
-
-			select {
-			case c <- message:
-			default:
-			}
-		}(ch)
+		n.deliver(topic, ch, message)
 	}
 
 	return nil
+}
+
+func (n *Notifier) deliver(topic string, ch chan any, message any) {
+	defer func() {
+		if r := recover(); r != nil {
+			// ignore send to closed channel
+		}
+	}()
+
+	switch n.mode {
+	case DeliveryHard: // blocking
+		ch <- message
+
+	case DeliverySoft: // retry + drop
+		for i := 0; i <= n.retryCount; i++ {
+			select {
+			case ch <- message:
+				return
+			default:
+				if i < n.retryCount {
+					time.Sleep(n.retryDelay)
+				}
+			}
+		}
+
+		if n.logger != nil {
+			n.logger.Error("message dropped", "topic", topic)
+		}
+
+	case DeliveryBounded: // timeout
+		if n.timeout <= 0 {
+			// fallback to soft
+			select {
+			case ch <- message:
+			default:
+				if n.logger != nil {
+					n.logger.Error("message dropped (no timeout set)", "topic", topic)
+				}
+			}
+
+			return
+		}
+
+		timer := time.NewTimer(n.timeout)
+		defer timer.Stop()
+
+		select {
+		case ch <- message:
+			return
+		case <-timer.C:
+			if n.logger != nil {
+				n.logger.Error("message delivery timeout", "topic", topic)
+			}
+		}
+	}
 }
 
 func (n *Notifier) unsubscribe(topic string, ch chan any) {
