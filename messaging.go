@@ -139,6 +139,7 @@ func (n *Notifier) deliver(topic string, ch chan any, message any) {
 	defer func() {
 		if r := recover(); r != nil {
 			// ignore send to closed channel
+			n.logError("send to closed channel", topic)
 		}
 	}()
 
@@ -150,17 +151,14 @@ func (n *Notifier) deliver(topic string, ch chan any, message any) {
 		for i := 0; i <= n.retryCount; i++ {
 			select {
 			case ch <- message:
-				return
 			default:
-				if i < n.retryCount {
+				if i < n.retryCount && n.retryDelay > 0 {
 					time.Sleep(n.retryDelay)
 				}
 			}
 		}
 
-		if n.logger != nil {
-			n.logger.Error("message dropped", "topic", topic)
-		}
+		n.logError("message dropped", topic)
 
 	case DeliveryBounded: // timeout
 		if n.timeout <= 0 {
@@ -168,24 +166,16 @@ func (n *Notifier) deliver(topic string, ch chan any, message any) {
 			select {
 			case ch <- message:
 			default:
-				if n.logger != nil {
-					n.logger.Error("message dropped (no timeout set)", "topic", topic)
-				}
+				n.logError("message dropped (no timeout set)", topic)
 			}
 
 			return
 		}
 
-		timer := time.NewTimer(n.timeout)
-		defer timer.Stop()
-
 		select {
 		case ch <- message:
-			return
-		case <-timer.C:
-			if n.logger != nil {
-				n.logger.Error("message delivery timeout", "topic", topic)
-			}
+		case <-time.After(n.timeout):
+			n.logError("message delivery timeout", topic)
 		}
 	}
 }
@@ -237,4 +227,10 @@ func (n *Notifier) Close() {
 
 	n.topics = nil
 	n.closed = true
+}
+
+func (n *Notifier) logError(msg string, topic string) {
+	if n.logger != nil {
+		n.logger.Error(msg, "topic", topic)
+	}
 }
