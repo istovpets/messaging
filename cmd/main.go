@@ -7,31 +7,45 @@ import (
 	"github.com/istovpets/messaging"
 )
 
+type StdLogger struct{}
+
+func (l *StdLogger) Error(msg string, args ...any) {
+	fmt.Println("[ERROR]", msg, args)
+}
+
 func main() {
-	notifier := messaging.NewNotifier()
-	defer notifier.Close()
+	notifier1 := messaging.NewNotifier()
 
-	if _, err := notifier.Subscribe("topic1", func(msg any) {
-		fmt.Printf("topic1 %v", msg)
-	}); err != nil {
-		fmt.Printf("subscribe error: %v\n", err)
-		return
-	}
+	// subscribe
+	unsub, _ := notifier1.Subscribe("topic", func(msg any) {
+		fmt.Println("received:", msg)
+	})
 
-	if _, err := notifier.Subscribe("topic2", func(msg any) {
-		println("topic2:", msg)
-	}); err != nil {
-		fmt.Printf("subscribe error: %v\n", err)
-		return
-	}
+	// publish
+	notifier1.Publish("topic", "hello")
+	notifier1.Publish("topic", "world")
 
-	if err := notifier.Publish("topic1", "Hello, world!"); err != nil {
-		fmt.Printf("publish error: %v\n", err)
-	}
+	time.Sleep(100 * time.Millisecond)
 
-	if err := notifier.Publish("topic3", "Hello, world!"); err != nil {
-		fmt.Printf("publish error: %v\n", err)
-	}
+	// unsubscribe
+	unsub()
 
-	time.Sleep(time.Second)
+	// another notifier with custom options
+	notifier2 := messaging.NewNotifier(
+		messaging.WithDeliveryMode(messaging.DeliveryBounded),
+		messaging.WithTimeout(200*time.Millisecond),
+	)
+
+	notifier2.Subscribe("events", func(msg any) {
+		fmt.Println("event:", msg)
+	})
+
+	notifier2.Publish("events", "ping")
+	notifier2.Publish("events", "pong")
+
+	time.Sleep(100 * time.Millisecond)
+
+	// close
+	notifier2.Close()
+	notifier1.Close()
 }

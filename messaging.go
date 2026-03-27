@@ -14,6 +14,13 @@ const (
 	DeliveryBounded                     // blocking with timeout
 )
 
+const (
+	defRetryDelay = 100 * time.Millisecond
+	defRetryCount = 3
+	defBufferSize = 1
+	defTimeout    = 100 * time.Millisecond
+)
+
 type Logger interface {
 	Error(msg string, args ...any)
 }
@@ -66,11 +73,11 @@ func WithLogger(l Logger) Option {
 func NewNotifier(opts ...Option) *Notifier {
 	n := &Notifier{
 		topics:     make(map[string][]chan any),
-		bufferSize: 1,
+		bufferSize: defBufferSize,
 		mode:       DeliverySoft,
-		retryCount: 0,
-		retryDelay: 0,
-		timeout:    0,
+		retryCount: defRetryCount,
+		retryDelay: defRetryDelay,
+		timeout:    defTimeout,
 	}
 
 	for _, opt := range opts {
@@ -151,6 +158,7 @@ func (n *Notifier) deliver(topic string, ch chan any, message any) {
 		for i := 0; i <= n.retryCount; i++ {
 			select {
 			case ch <- message:
+				return
 			default:
 				if i < n.retryCount && n.retryDelay > 0 {
 					time.Sleep(n.retryDelay)
@@ -165,6 +173,7 @@ func (n *Notifier) deliver(topic string, ch chan any, message any) {
 			// fallback to soft
 			select {
 			case ch <- message:
+				return
 			default:
 				n.logError("message dropped (no timeout set)", topic)
 			}
@@ -174,6 +183,7 @@ func (n *Notifier) deliver(topic string, ch chan any, message any) {
 
 		select {
 		case ch <- message:
+			return
 		case <-time.After(n.timeout):
 			n.logError("message delivery timeout", topic)
 		}
