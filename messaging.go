@@ -6,12 +6,44 @@ import (
 	"time"
 )
 
+// DeliveryMode defines how messages are delivered to subscribers
+// and what delivery guarantees are provided.
 type DeliveryMode int
 
 const (
-	DeliveryHard    DeliveryMode = iota // blocking delivery (guaranteed, but risk of freezing)
-	DeliverySoft                        // non-blocking with retry (best-effort)
-	DeliveryBounded                     // blocking with timeout
+	// DeliveryHard performs blocking delivery.
+	// The sender waits until the message is accepted by the subscriber.
+	//
+	// Guarantees:
+	//   - No message loss.
+	//
+	// Trade-offs:
+	//   - Can block indefinitely if the subscriber is slow or not reading.
+	DeliveryHard DeliveryMode = iota
+
+	// DeliverySoft performs non-blocking delivery with retries.
+	// If the channel is full, it retries sending with a delay and eventually drops the message.
+	//
+	// Guarantees:
+	//   - Best-effort delivery.
+	//   - Message may be lost after retries are exhausted.
+	//
+	// Trade-offs:
+	//   - Does not block the sender.
+	//   - Delivery is not guaranteed.
+	DeliverySoft
+
+	// DeliveryBounded performs blocking delivery with a timeout.
+	// The sender waits until the message is accepted or the timeout expires.
+	//
+	// Guarantees:
+	//   - Message is delivered if the subscriber becomes ready before the timeout.
+	//   - Message is dropped on timeout.
+	//
+	// Trade-offs:
+	//   - Bounded blocking (limited wait time).
+	//   - Delivery is not guaranteed.
+	DeliveryBounded
 )
 
 const (
@@ -70,6 +102,8 @@ func WithLogger(l Logger) Option {
 	}
 }
 
+// NewNotifier creates a new Notifier instance with the provided options.
+// If no options are specified, default configuration values are used.
 func NewNotifier(opts ...Option) *Notifier {
 	n := &Notifier{
 		topics:     make(map[string][]chan any),
@@ -108,6 +142,10 @@ func (n *Notifier) subscribeChan(topic string) (chan any, error) {
 	return ch, nil
 }
 
+// It returns an unsubscribe function that can be called to stop receiving messages.
+//
+// The handler is executed in a separate goroutine and will receive messages
+// published to the topic until unsubscribed or the notifier is closed.
 func (n *Notifier) Subscribe(topic string, handler func(any)) (func(), error) {
 	ch, err := n.subscribeChan(topic)
 	if err != nil {
@@ -125,6 +163,10 @@ func (n *Notifier) Subscribe(topic string, handler func(any)) (func(), error) {
 	}, nil
 }
 
+// Publish sends a message to all subscribers of the given topic.
+// Delivery behavior depends on the configured DeliveryMode.
+//
+// Returns an error if the notifier is closed.
 func (n *Notifier) Publish(topic string, message any) error {
 	n.mu.RLock()
 	if n.closed {
@@ -146,7 +188,7 @@ func (n *Notifier) deliver(topic string, ch chan any, message any) {
 	defer func() {
 		if r := recover(); r != nil {
 			// ignore send to closed channel
-			n.logError("send to closed channel", topic)
+			n.logError("deliver failed: channel is closed", topic)
 		}
 	}()
 
@@ -173,7 +215,7 @@ func (n *Notifier) deliver(topic string, ch chan any, message any) {
 		}
 
 		if !sent {
-			n.logError("message dropped", topic)
+			n.logError("deliver failed: message dropped after retries", topic)
 		}
 
 	case DeliveryBounded: // timeout
@@ -183,7 +225,7 @@ func (n *Notifier) deliver(topic string, ch chan any, message any) {
 			case ch <- message:
 				return
 			default:
-				n.logError("message dropped (no timeout set)", topic)
+				n.logError("deliver failed: message dropped (no timeout)", topic)
 			}
 
 			return
@@ -193,7 +235,7 @@ func (n *Notifier) deliver(topic string, ch chan any, message any) {
 		case ch <- message:
 			return
 		case <-time.After(n.timeout):
-			n.logError("message delivery timeout", topic)
+			n.logError("deliver failed: timeout exceeded", topic)
 		}
 	}
 }
@@ -218,6 +260,8 @@ func (n *Notifier) unsubscribe(topic string, ch chan any) {
 	}
 }
 
+// UnsubscribeAll removes all subscribers for the given topic
+// and closes their channels.
 func (n *Notifier) UnsubscribeAll(topic string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -229,6 +273,8 @@ func (n *Notifier) UnsubscribeAll(topic string) {
 	delete(n.topics, topic)
 }
 
+// Close shuts down the notifier and closes all subscriber channels.
+// After calling Close, the notifier cannot be used anymore.
 func (n *Notifier) Close() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
