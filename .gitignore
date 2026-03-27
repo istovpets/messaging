@@ -1,0 +1,8 @@
+/bin/
+*.out
+*.test
+cover.out
+.env
+.vscode/
+*.swp
+
