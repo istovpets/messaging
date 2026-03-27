@@ -13,6 +13,7 @@ func (l *StdLogger) Error(msg string, args ...any) {
 	fmt.Println("[ERROR]", msg, args)
 }
 
+//nolint:errcheck
 func main() {
 	notifier1 := messaging.NewNotifier()
 

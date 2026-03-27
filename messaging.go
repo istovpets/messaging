@@ -155,18 +155,26 @@ func (n *Notifier) deliver(topic string, ch chan any, message any) {
 		ch <- message
 
 	case DeliverySoft: // retry + drop
+		sent := false
+
 		for i := 0; i <= n.retryCount; i++ {
 			select {
 			case ch <- message:
-				return
+				sent = true
 			default:
 				if i < n.retryCount && n.retryDelay > 0 {
 					time.Sleep(n.retryDelay)
 				}
 			}
+
+			if sent {
+				break
+			}
 		}
 
-		n.logError("message dropped", topic)
+		if !sent {
+			n.logError("message dropped", topic)
+		}
 
 	case DeliveryBounded: // timeout
 		if n.timeout <= 0 {

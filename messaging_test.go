@@ -16,14 +16,14 @@ func TestNewNotifier_DefaultValues(t *testing.T) {
 	if n.bufferSize != 1 {
 		t.Errorf("expected bufferSize 1, got %d", n.bufferSize)
 	}
-	if n.retryCount != 0 {
-		t.Errorf("expected retryCount 0, got %d", n.retryCount)
+	if n.retryCount != defRetryCount {
+		t.Errorf("expected retryCount %d, got %d", defRetryCount, n.retryCount)
 	}
-	if n.retryDelay != 0 {
-		t.Errorf("expected retryDelay 0, got %v", n.retryDelay)
+	if n.retryDelay != defRetryDelay {
+		t.Errorf("expected retryDelay %v, got %v", defRetryDelay, n.retryDelay)
 	}
-	if n.timeout != 0 {
-		t.Errorf("expected timeout 0, got %v", n.timeout)
+	if n.timeout != defTimeout {
+		t.Errorf("expected timeout %v, got %v", defTimeout, n.timeout)
 	}
 }
 
@@ -406,10 +406,17 @@ func TestPublish_DifferentTopics(t *testing.T) {
 
 func TestWithLogger(t *testing.T) {
 	mockLogger := &mockLogger{}
-	n := NewNotifier(WithDeliveryMode(DeliverySoft), WithBuffer(1), WithLogger(mockLogger))
+	var received atomic.Int32
+	n := NewNotifier(
+		WithDeliveryMode(DeliverySoft),
+		WithBuffer(0),
+		WithRetry(2, 10*time.Millisecond),
+		WithLogger(mockLogger),
+	)
 	defer n.Close()
 
 	_, err := n.Subscribe("test", func(msg any) {
+		received.Add(1)
 		time.Sleep(100 * time.Millisecond)
 	})
 	if err != nil {
@@ -423,8 +430,11 @@ func TestWithLogger(t *testing.T) {
 		t.Fatalf("publish failed: %v", err)
 	}
 
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
+	if received.Load() != 1 {
+		t.Errorf("expected 1 message received, got %d", received.Load())
+	}
 	if mockLogger.errorCount.Load() == 0 {
 		t.Error("expected logger to be called for dropped messages")
 	}
