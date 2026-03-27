@@ -486,11 +486,9 @@ func TestConcurrentSubscribePublish(t *testing.T) {
 	doneCh := make(chan struct{})
 
 	// Start subscribers
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wgSubscribers.Add(1) // For readiness signaling
-		wgExit.Add(1)        // For exit waiting
-		go func() {
-			defer wgExit.Done() // Signal exit when we're done
+		wgExit.Go(func() {
 			unsub, err := n.Subscribe("test", func(msg any) {
 				count.Add(1)
 			})
@@ -503,7 +501,7 @@ func TestConcurrentSubscribePublish(t *testing.T) {
 			wgSubscribers.Done()
 			// Wait until we are told to stop
 			<-doneCh
-		}()
+		})
 	}
 
 	// Wait for all subscribers to be ready (they are blocked on <-doneCh)
@@ -511,12 +509,10 @@ func TestConcurrentSubscribePublish(t *testing.T) {
 
 	// Publish messages
 	var wgPublish sync.WaitGroup
-	for i := 0; i < 100; i++ {
-		wgPublish.Add(1)
-		go func() {
-			defer wgPublish.Done()
-			n.Publish("test", "msg")
-		}()
+	for range 100 {
+		wgPublish.Go(func() {
+			n.Publish("test", "msg") //nolint:errcheck
+		})
 	}
 	wgPublish.Wait()
 
