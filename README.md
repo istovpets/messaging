@@ -1,5 +1,8 @@
 # messaging
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/istovpets/messaging.svg)](https://pkg.go.dev/github.com/istovpets/messaging)
+[![Portfolio](https://img.shields.io/badge/author-portfolio-blue)](https://programmer.stovpets.com/)
+
 Lightweight in-memory Pub/Sub (publish–subscribe) implementation in Go.
 
 Designed for simple use cases where you need to broadcast messages between goroutines with configurable delivery semantics.
