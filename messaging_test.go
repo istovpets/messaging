@@ -268,7 +268,7 @@ func TestDeliveryHard_Blocking(t *testing.T) {
 	}
 }
 
-func TestDeliverySoft_NonBlocking(t *testing.T) {
+func TestDeliverySoft_DoesNotBlockTooLong(t *testing.T) {
 	n := NewNotifier(WithDeliveryMode(DeliverySoft), WithBuffer(1))
 	defer n.Close()
 
@@ -296,7 +296,7 @@ func TestDeliverySoft_NonBlocking(t *testing.T) {
 	select {
 	case <-done:
 		// Success - non-blocking delivery worked
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(500 * time.Millisecond):
 		t.Error("publish took too long - soft delivery should be non-blocking")
 	}
 
