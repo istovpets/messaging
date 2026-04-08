@@ -61,6 +61,7 @@ type Notifier struct {
 	mu         sync.RWMutex
 	topics     map[string][]chan any
 	closed     bool
+	wg         sync.WaitGroup
 	mode       DeliveryMode
 	bufferSize int
 	retryCount int
@@ -133,6 +134,7 @@ func (n *Notifier) subscribeChan(topic string) (chan any, error) {
 
 	oldChnls := n.topics[topic]
 
+	// copy-on-write to avoid data races with concurrent readers
 	newChnls := make([]chan any, len(oldChnls)+1)
 	copy(newChnls, oldChnls)
 	newChnls[len(oldChnls)] = ch
@@ -147,16 +149,27 @@ func (n *Notifier) subscribeChan(topic string) (chan any, error) {
 // The handler is executed in a separate goroutine and will receive messages
 // published to the topic until unsubscribed or the notifier is closed.
 func (n *Notifier) Subscribe(topic string, handler func(any)) (func(), error) {
+	if handler == nil {
+		return nil, fmt.Errorf("handler cannot be nil")
+	}
+
 	ch, err := n.subscribeChan(topic)
 	if err != nil {
 		return nil, err
 	}
 
-	go func() {
+	n.wg.Go(func() {
 		for msg := range ch {
-			handler(msg)
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						n.logError(fmt.Sprintf("handler panic: %v", r), topic)
+					}
+				}()
+				handler(msg)
+			}()
 		}
-	}()
+	})
 
 	return func() {
 		n.unsubscribe(topic, ch)
@@ -277,7 +290,6 @@ func (n *Notifier) UnsubscribeAll(topic string) {
 // After calling Close, the notifier cannot be used anymore.
 func (n *Notifier) Close() {
 	n.mu.Lock()
-	defer n.mu.Unlock()
 
 	if n.closed {
 		return
@@ -291,6 +303,10 @@ func (n *Notifier) Close() {
 
 	n.topics = nil
 	n.closed = true
+
+	n.mu.Unlock()
+
+	n.wg.Wait()
 }
 
 func (n *Notifier) logError(msg string, topic string) {
